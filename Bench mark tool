@@ -1,0 +1,284 @@
+import com.changemanager.model.ChangeRequest;
+import com.changemanager.util.MongoDBConnection;
+import com.mongodb.client.MongoCollection;
+import com.mongodb.client.MongoDatabase;
+import org.bson.Document;
+ 
+import java.util.ArrayList;
+import java.util.List;
+ 
+import static com.mongodb.client.model.Filters.eq;
+ 
+public class ChangeRequestDAO {
+    private final MongoDatabase db = MongoDBConnection.getDatabase();
+    private final MongoCollection<Document> collection = db.getCollection("change_requests");
+ 
+    public void insert(ChangeRequest cr) {
+        collection.insertOne(cr.toDocument());
+    }
+ 
+    public List<ChangeRequest> getAll() {
+        List<ChangeRequest> list = new ArrayList<>();
+        for (Document doc : collection.find()) {
+            list.add(ChangeRequest.fromDocument(doc));
+        }
+        return list;
+    }
+ 
+    public ChangeRequest getById(String id) {
+        Document doc = collection.find(eq("_id", new org.bson.types.ObjectId(id))).first();
+        return doc == null ? null : ChangeRequest.fromDocument(doc);
+    }
+ 
+    public void update(ChangeRequest cr) {
+        collection.replaceOne(eq("_id", new org.bson.types.ObjectId(cr.getId())), cr.toDocument());
+    }
+ 
+    public void delete(String id) {
+        collection.deleteOne(eq("_id", new org.bson.types.ObjectId(id)));
+    }
+}
+ 
+ 
+ChangeRequest.java:
+package com.changemanager.model;
+import org.bson.Document;
+ 
+public class ChangeRequest {
+    private String id;
+    private String title;
+    private String description;
+    private String status;
+    private int priority;
+    private String assignedTo;
+ 
+    public ChangeRequest() {}
+ 
+    public ChangeRequest(String title, String description, String status, int priority, String assignedTo) {
+        this.title = title;
+        this.description = description;
+        this.status = status;
+        this.priority = priority;
+        this.assignedTo = assignedTo;
+    }
+ 
+    public String getId() { return id; }
+    public void setId(String id) { this.id = id; }
+    public String getTitle() { return title; }
+    public void setTitle(String title) { this.title = title; }
+    public String getDescription() { return description; }
+    public void setDescription(String description) { this.description = description; }
+    public String getStatus() { return status; }
+    public void setStatus(String status) { this.status = status; }
+    public int getPriority() { return priority; }
+    public void setPriority(int priority) { this.priority = priority; }
+    public String getAssignedTo() { return assignedTo; }
+    public void setAssignedTo(String assignedTo) { this.assignedTo = assignedTo; }
+ 
+    public Document toDocument() {
+        Document doc = new Document();
+        if(id != null) doc.append("_id", new org.bson.types.ObjectId(id));
+        doc.append("title", title)
+           .append("description", description)
+           .append("status", status)
+           .append("priority", priority)
+           .append("assignedTo", assignedTo);
+        return doc;
+    }
+ 
+    public static ChangeRequest fromDocument(Document doc) {
+        ChangeRequest cr = new ChangeRequest();
+        cr.setId(doc.getObjectId("_id").toHexString());
+        cr.setTitle(doc.getString("title"));
+        cr.setDescription(doc.getString("description"));
+        cr.setStatus(doc.getString("status"));
+        cr.setPriority(doc.getInteger("priority", 3));
+        cr.setAssignedTo(doc.getString("assignedTo"));
+        return cr;
+    }
+ 
+    @Override
+    public String toString() {
+        return "ChangeRequest{" +
+                "id='" + id + '\'' +
+                ", title='" + title + '\'' +
+                ", status='" + status + '\'' +
+                ", priority=" + priority +
+                ", assignedTo='" + assignedTo + '\'' +
+                '}';
+    }
+}
+ 
+SyncManager.java:
+package com.changemanager.sync;
+ 
+import com.changemanager.dao.ChangeRequestDAO;
+import com.changemanager.model.ChangeRequest;
+ 
+import java.io.FileWriter;
+import java.io.IOException;
+import java.util.List;
+ 
+public class SyncManager implements Runnable {
+    private final ChangeRequestDAO dao = new ChangeRequestDAO();
+ 
+    @Override
+    public void run() {
+        while (true) {
+            try {
+                syncData();
+                Thread.sleep(60000); // every 60 seconds
+            } catch (Exception e) {
+                System.err.println("Sync error: " + e.getMessage());
+            }
+        }
+    }
+ 
+    public void syncData() throws IOException {
+        List<ChangeRequest> list = dao.getAll();
+        try (FileWriter fw = new FileWriter("sync_data.txt", false)) {
+            for (ChangeRequest cr : list) {
+                fw.write(cr.toString() + "\n");
+            }
+        }
+        System.out.println("Sync completed: " + list.size() + " records.");
+    }
+}
+MongoDBConnection.java:
+package com.changemanager.util;
+ 
+import com.mongodb.client.MongoClient;
+import com.mongodb.client.MongoClients;
+import com.mongodb.client.MongoDatabase;
+ 
+public class MongoDBConnection {
+    private static final String URI = "mongodb://localhost:27017";
+    private static final String DB_NAME = "change_request_db";
+ 
+    private static MongoClient mongoClient = null;
+ 
+    public static MongoDatabase getDatabase() {
+        if (mongoClient == null) {
+            mongoClient = MongoClients.create(URI);
+        }
+        return mongoClient.getDatabase(DB_NAME);
+    }
+}
+Main.java:
+package com.changemanager;
+ 
+import com.changemanager.dao.ChangeRequestDAO;
+import com.changemanager.model.ChangeRequest;
+import com.changemanager.sync.SyncManager;
+ 
+import java.util.List;
+import java.util.Scanner;
+ 
+public class Main {
+    public static void main(String[] args) {
+        try {
+            ChangeRequestDAO dao = new ChangeRequestDAO();
+            SyncManager sync = new SyncManager();
+ 
+            // Start background sync thread safely
+            Thread syncThread = new Thread(sync);
+            syncThread.setDaemon(true);
+            syncThread.start();
+ 
+            Scanner sc = new Scanner(System.in);
+            while (true) {
+                System.out.println("\n1. Insert  2. View All  3. Update  4. Delete  0. Exit");
+                System.out.print("Choose: ");
+                int choice = sc.n
+sc.nextLine(); // consume newline
+ 
+                switch (choice) {
+                    case 1 -> {
+                        System.out.print("Title: ");
+                        String title = sc.nextLine();
+                        System.out.print("Description: ");
+                        String desc = sc.nextLine();
+                        System.out.print("Status: ");
+                        String status = sc.nextLine();
+                        System.out.print("Priority: ");
+                        int prio = sc.nextInt();
+                        sc.nextLine();
+                        System.out.print("Assigned To: ");
+                        String assigned = sc.nextLine();
+ 
+                        ChangeRequest cr = new ChangeRequest(title, desc, status, prio, assigned);
+                        dao.insert(cr);
+                        System.out.println("✅ Inserted successfully!");
+                    }
+ 
+                    case 2 -> {
+                        List<ChangeRequest> list = dao.getAll();
+                        if (list.isEmpty()) {
+                            System.out.println("⚠️ No records found.");
+                        } else {
+                            list.forEach(System.out::println);
+                        }
+                    }
+ 
+                    case 3 -> {
+                        System.out.print("Enter ID to update: ");
+                        String id = sc.nextLine();
+                        ChangeRequest cr = dao.getById(id);
+                        if (cr != null) {
+                            System.out.print("New Title: ");
+                            cr.setTitle(sc.nextLine());
+                            System.out.print("New Status: ");
+                            cr.setStatus(sc.nextLine());
+                            dao.update(cr);
+                            System.out.println("✅ Updated successfully!");
+                        } else {
+                            System.out.println("❌ Record not found.");
+                        }
+                    }
+ 
+                    case 4 -> {
+                        System.out.print("Enter ID to delete: ");
+                        String id = sc.nextLine();
+                        dao.delete(id);
+                        System.out.println("🗑️ Deleted successfully!");
+                    }
+ 
+                    case 0 -> {
+                        System.out.println("👋 Exiting...");
+                        sc.close();
+                        System.exit(0);
+                    }
+ 
+                    default -> System.out.println("❌ Invalid choice!");
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
